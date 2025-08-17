@@ -161,35 +161,64 @@ def app_ui():
     # Tab 2: Yield Prediction
     # --------------------------
     with tab2:
-        st.header("📊 Crop Yield Prediction")
-        st.write("Enter agricultural parameters to predict yield (tons/hectare).")
+      st.header("📊 Crop Yield Prediction")
+      st.write("Enter agricultural parameters to predict yield (tons/hectare).")
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            crop = st.text_input("🌱 Crop", value="Rice")
-            crop_year = st.number_input("📅 Crop Year", value=2020, step=1)
-            season = st.text_input("☀️ Season", value="Kharif")
-        with col2:
-            state = st.text_input("🏞️ State", value="Maharashtra")
-            area = st.number_input("🌾 Area (hectares)", value=1.0)
-            production = st.number_input("🏭 Production (tons)", value=2.5)
-        with col3:
-            annual_rainfall = st.number_input("🌧️ Annual Rainfall (mm)", value=800.0)
-            fertilizer = st.number_input("🧴 Fertilizer (kg)", value=100.0)
-            pesticide = st.number_input("🧪 Pesticide (kg)", value=10.0)
+    # Load models & encoders first (to fetch dropdown options)
+      _, yield_model, _, yield_encoders = load_models()
 
-        if st.button("📈 Predict Yield"):
-            _, yield_model, _, yield_encoders = load_models()
-            crop_val = yield_encoders["Crop"].transform([crop])[0] if crop in yield_encoders["Crop"].classes_ else 0
-            season_val = yield_encoders["Season"].transform([season])[0] if season in yield_encoders["Season"].classes_ else 0
-            state_val = yield_encoders["State"].transform([state])[0] if state in yield_encoders["State"].classes_ else 0
+      col1, col2, col3 = st.columns(3)
+      with col1:
+        # Dropdown for Crop
+        crop = st.selectbox(
+            "🌱 Crop",
+            options=list(yield_encoders["Crop"].classes_),
+            index=0
+        )
 
-            features = [[crop_val, crop_year, season_val, state_val,
-                         area, production, annual_rainfall, fertilizer, pesticide]]
-            prediction = yield_model.predict(features)
+        crop_year = st.number_input("📅 Crop Year", value=2020, step=1)
 
-            prediction_value = float(prediction.item())
-            st.success(f"📊 Predicted Yield: **{prediction_value:.2f} tons/hectare**")
+        # Dropdown for Season
+        season = st.selectbox(
+            "☀️ Season",
+            options=list(yield_encoders["Season"].classes_),
+            index=0
+        )
+
+      with col2:
+        # Dropdown for State
+        state = st.selectbox(
+            "🏞️ State",
+            options=list(yield_encoders["State"].classes_),
+            index=0
+        )
+
+        area = st.number_input("🌾 Area (hectares)", value=1.0)
+        production = st.number_input("🏭 Production (tons)", value=2.5)
+
+      with col3:
+        annual_rainfall = st.number_input("🌧️ Annual Rainfall (mm)", value=800.0)
+        fertilizer = st.number_input("🧴 Fertilizer (kg)", value=100.0)
+        pesticide = st.number_input("🧪 Pesticide (kg)", value=10.0)
+
+      if st.button("📈 Predict Yield"):
+        # Encode categorical values
+        crop_val = yield_encoders["Crop"].transform([crop])[0]
+        season_val = yield_encoders["Season"].transform([season])[0]
+        state_val = yield_encoders["State"].transform([state])[0]
+
+        # Features
+        features = [[
+            crop_val, crop_year, season_val, state_val,
+            area, production, annual_rainfall, fertilizer, pesticide
+        ]]
+
+        # Predict
+        prediction = yield_model.predict(features)
+        prediction_value = float(prediction.item())
+
+        st.success(f"📊 Predicted Yield: **{prediction_value:.2f} tons/hectare**")
+
 
 # ==============================
 # Login / Sign Up UI
