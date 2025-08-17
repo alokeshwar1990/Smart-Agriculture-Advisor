@@ -1,137 +1,239 @@
-import streamlit as st
+import os
+import zipfile
+import pickle
 import pandas as pd
-import numpy as np
-import joblib
-from pathlib import Path
+import streamlit as st
+from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.preprocessing import LabelEncoder
 
-# ---------------- PATHS ----------------
-BASE_DIR = Path(__file__).resolve().parent
-CROP_DATA_PATH = BASE_DIR / "crop_recommendation_dataset.csv"
-YIELD_DATA_PATH = BASE_DIR / "crop_yield.csv"
+# ==============================
+# File Paths (local in src/)
+# ==============================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CROP_DATA_ZIP = os.path.join(BASE_DIR, "crop_recommendation_dataset.csv.zip")
+YIELD_DATA_ZIP = os.path.join(BASE_DIR, "crop_yield.csv.zip")
 
-CROP_MODEL_PATH = BASE_DIR / "crop_model.pkl"
-YIELD_MODEL_PATH = BASE_DIR / "yield_model.pkl"
-ENCODERS_PATH = BASE_DIR / "feature_encoders.pkl"
+CROP_MODEL_FILE = os.path.join(BASE_DIR, "crop_model.pkl")
+YIELD_MODEL_FILE = os.path.join(BASE_DIR, "yield_model.pkl")
+CROP_ENCODERS_FILE = os.path.join(BASE_DIR, "crop_encoders.pkl")
+YIELD_ENCODERS_FILE = os.path.join(BASE_DIR, "yield_encoders.pkl")
 
-# ---------------- TRAINING FUNCTIONS ----------------
-@st.cache_resource
-def train_crop_model():
-    df = pd.read_csv(CROP_DATA_PATH)
-    
-    label_encoders = {}
-    
-    # Encode categorical columns
-    for col in ['Soil', 'Crop']:
-        le = LabelEncoder()
-        df[col] = le.fit_transform(df[col])
-        label_encoders[col] = le
-    
-    X = df[['Temperature', 'Humidity', 'Rainfall', 'PH', 
-            'Nitrogen', 'Phosphorous', 'Potassium', 'Carbon', 'Soil']]
-    y = df['Crop']
-    
-    model = RandomForestClassifier(n_estimators=200, random_state=42)
-    model.fit(X, y)
-    
-    joblib.dump(model, CROP_MODEL_PATH)
-    joblib.dump(label_encoders, ENCODERS_PATH)
-    
-    return model, label_encoders
+# ----------------------
+# User data file
+# ----------------------
+USER_FILE = os.path.join(BASE_DIR, "users.pkl")
+if os.path.exists(USER_FILE):
+    with open(USER_FILE, "rb") as f:
+        users = pickle.load(f)
+else:
+    users = {}  # format: {username: password}
 
-@st.cache_resource
-def train_yield_model():
-    df = pd.read_csv(YIELD_DATA_PATH)
-    
-    label_encoders = {}
-    for col in ['Crop', 'Season', 'State']:
-        le = LabelEncoder()
-        df[col] = le.fit_transform(df[col])
-        label_encoders[col] = le
-    
-    X = df[['Crop', 'Crop_Year', 'Season', 'State', 'Area', 
-            'Annual_Rainfall', 'Fertilizer', 'Pesticide']]
-    y = df['Yield']
-    
-    model = RandomForestRegressor(n_estimators=200, random_state=42)
-    model.fit(X, y)
-    
-    joblib.dump(model, YIELD_MODEL_PATH)
-    joblib.dump(label_encoders, ENCODERS_PATH)
-    
-    return model, label_encoders
+# ==============================
+# Prepare Models
+# ==============================
+def prepare_models():
+    if all(os.path.exists(f) for f in [CROP_MODEL_FILE, YIELD_MODEL_FILE, CROP_ENCODERS_FILE, YIELD_ENCODERS_FILE]):
+        return
 
-# ---------------- LOAD OR TRAIN ----------------
-def load_or_train():
-    if CROP_MODEL_PATH.exists() and YIELD_MODEL_PATH.exists() and ENCODERS_PATH.exists():
-        crop_model = joblib.load(CROP_MODEL_PATH)
-        yield_model = joblib.load(YIELD_MODEL_PATH)
-        encoders = joblib.load(ENCODERS_PATH)
-    else:
-        st.info("Training models for the first time... please wait ⏳")
-        crop_model, encoders = train_crop_model()
-        yield_model, encoders_y = train_yield_model()
-        encoders.update(encoders_y)
-    return crop_model, yield_model, encoders
+    # Crop Recommendation Model
+    with zipfile.ZipFile(CROP_DATA_ZIP, "r") as z:
+        z.extractall(BASE_DIR)
+    crop_df = pd.read_csv(os.path.join(BASE_DIR, "crop_recommendation_dataset.csv"))
 
-crop_model, yield_model, encoders = load_or_train()
+    crop_features = ["Temperature", "Humidity", "Rainfall", "PH",
+                     "Nitrogen", "Phosphorous", "Potassium", "Carbon", "Soil"]
+    crop_target = "Crop"
 
-# ---------------- STREAMLIT UI ----------------
-st.set_page_config(page_title="Smart Agriculture Advisor", layout="wide")
+    crop_encoders = {}
+    if "Soil" in crop_df.columns:
+        enc = LabelEncoder()
+        crop_df["Soil"] = enc.fit_transform(crop_df["Soil"])
+        crop_encoders["Soil"] = enc
 
-st.title("🌾 Smart Agriculture Advisor")
-tab1, tab2 = st.tabs(["🌱 Crop Recommendation", "📈 Yield Prediction"])
+    X_crop = crop_df[crop_features]
+    y_crop = crop_df[crop_target]
 
-# ---------------- TAB 1: Crop Recommendation ----------------
-with tab1:
-    st.subheader("Enter Environmental & Soil Parameters")
+    crop_encoders["Crop"] = LabelEncoder()
+    y_crop = crop_encoders["Crop"].fit_transform(y_crop)
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        temperature = st.number_input("Temperature (°C)", 0.0, 50.0, 25.0)
-        nitrogen = st.number_input("Nitrogen (N)", 0.0, 200.0, 50.0)
-        phosphorous = st.number_input("Phosphorous (P)", 0.0, 200.0, 50.0)
-    with col2:
-        humidity = st.number_input("Humidity (%)", 0.0, 100.0, 50.0)
-        potassium = st.number_input("Potassium (K)", 0.0, 200.0, 50.0)
-        carbon = st.number_input("Carbon (%)", 0.0, 10.0, 1.0)
-    with col3:
-        rainfall = st.number_input("Rainfall (mm)", 0.0, 500.0, 100.0)
-        ph = st.number_input("pH", 0.0, 14.0, 6.5)
-        soil = st.selectbox("Soil Type", encoders['Soil'].classes_)
+    X_train, X_test, y_train, y_test = train_test_split(X_crop, y_crop, test_size=0.2, random_state=42)
+    crop_model = RandomForestClassifier(random_state=42)
+    crop_model.fit(X_train, y_train)
 
-    if st.button("Recommend Crop"):
-        soil_encoded = encoders['Soil'].transform([soil])[0]
-        features = np.array([[temperature, humidity, rainfall, ph, 
-                               nitrogen, phosphorous, potassium, carbon, soil_encoded]])
-        prediction = crop_model.predict(features)[0]
-        crop_name = encoders['Crop'].inverse_transform([prediction])[0]
-        st.success(f"🌱 Recommended Crop: **{crop_name}**")
+    with open(CROP_MODEL_FILE, "wb") as f:
+        pickle.dump(crop_model, f)
+    with open(CROP_ENCODERS_FILE, "wb") as f:
+        pickle.dump(crop_encoders, f)
 
-# ---------------- TAB 2: Yield Prediction ----------------
-with tab2:
-    st.subheader("Predict Crop Yield")
+    # Yield Prediction Model
+    with zipfile.ZipFile(YIELD_DATA_ZIP, "r") as z:
+        z.extractall(BASE_DIR)
+    yield_df = pd.read_csv(os.path.join(BASE_DIR, "crop_yield.csv"))
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        crop = st.selectbox("Crop", encoders['Crop'].classes_)
-        crop_year = st.number_input("Crop Year", 2000, 2050, 2024)
-        season = st.selectbox("Season", encoders['Season'].classes_)
-    with col2:
-        state = st.selectbox("State", encoders['State'].classes_)
-        area = st.number_input("Area (ha)", 0.0, 100000.0, 100.0)
-        rainfall = st.number_input("Annual Rainfall (mm)", 0.0, 5000.0, 1000.0)
-    with col3:
-        fertilizer = st.number_input("Fertilizer (kg/ha)", 0.0, 1000.0, 100.0)
-        pesticide = st.number_input("Pesticide (kg/ha)", 0.0, 500.0, 10.0)
+    yield_features = ["Crop", "Crop_Year", "Season", "State", "Area",
+                      "Production", "Annual_Rainfall", "Fertilizer", "Pesticide"]
+    yield_target = "Yield"
 
-    if st.button("Predict Yield"):
-        crop_encoded = encoders['Crop'].transform([crop])[0]
-        season_encoded = encoders['Season'].transform([season])[0]
-        state_encoded = encoders['State'].transform([state])[0]
-        
-        features = np.array([[crop_encoded, crop_year, season_encoded, state_encoded, 
-                               area, rainfall, fertilizer, pesticide]])
-        prediction = yield_model.predict(features)[0]
-        st.success(f"📈 Predicted Yield: **{prediction:.2f} quintals/ha**")
+    yield_encoders = {}
+    for col in ["Crop", "Season", "State"]:
+        enc = LabelEncoder()
+        yield_df[col] = enc.fit_transform(yield_df[col])
+        yield_encoders[col] = enc
+
+    X_yield = yield_df[yield_features]
+    y_yield = yield_df[yield_target]
+
+    X_train, X_test, y_train, y_test = train_test_split(X_yield, y_yield, test_size=0.2, random_state=42)
+    yield_model = RandomForestRegressor(random_state=42)
+    yield_model.fit(X_train, y_train)
+
+    with open(YIELD_MODEL_FILE, "wb") as f:
+        pickle.dump(yield_model, f)
+    with open(YIELD_ENCODERS_FILE, "wb") as f:
+        pickle.dump(yield_encoders, f)
+
+# ==============================
+# Load Models
+# ==============================
+def load_models():
+    with open(CROP_MODEL_FILE, "rb") as f:
+        crop_model = pickle.load(f)
+    with open(YIELD_MODEL_FILE, "rb") as f:
+        yield_model = pickle.load(f)
+    with open(CROP_ENCODERS_FILE, "rb") as f:
+        crop_encoders = pickle.load(f)
+    with open(YIELD_ENCODERS_FILE, "rb") as f:
+        yield_encoders = pickle.load(f)
+    return crop_model, yield_model, crop_encoders, yield_encoders
+
+# ==============================
+# Main App UI
+# ==============================
+def app_ui():
+    st.set_page_config(page_title="🌾 Smart Agriculture Advisor", layout="wide")
+    st.title("🌾 Smart Agriculture Advisor")
+
+    tab1, tab2 = st.tabs(["🌱 Crop Recommendation", "📊 Yield Prediction"])
+
+    # --------------------------
+    # Tab 1: Crop Recommendation
+    # --------------------------
+    with tab1:
+        st.header("🌱 Crop Recommendation System")
+        st.write("Enter soil and environmental parameters to get recommended crop.")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            temperature = st.number_input("🌡️ Temperature (°C)", value=25.0)
+            humidity = st.number_input("💧 Humidity (%)", value=60.0)
+            rainfall = st.number_input("🌧️ Rainfall (mm)", value=200.0)
+        with col2:
+            ph = st.number_input("⚗️ Soil pH", value=6.5)
+            nitrogen = st.number_input("🧪 Nitrogen (N)", value=50.0)
+            phosphorous = st.number_input("🧪 Phosphorous (P)", value=30.0)
+        with col3:
+            potassium = st.number_input("🧪 Potassium (K)", value=40.0)
+            carbon = st.number_input("🌍 Carbon (%)", value=1.2)
+
+            # Dropdown for Soil types
+            _, _, crop_encoders, _ = load_models()
+            soil_types = crop_encoders["Soil"].classes_
+            soil = st.selectbox("🪨 Soil Type", soil_types)
+
+        if st.button("🔍 Recommend Crop"):
+          crop_model, _, crop_encoders, _ = load_models()
+          soil_val = crop_encoders["Soil"].transform([soil])[0]
+
+          features = [[temperature, humidity, rainfall, ph,
+                 nitrogen, phosphorous, potassium, carbon, soil_val]]
+
+    # Make prediction
+          prediction = crop_model.predict(features)
+
+    # If prediction is already the crop name, just use it
+          crop_name = prediction[0]
+
+          st.success(f"🌱 Recommended Crop: **{crop_name}**")
+
+
+    # --------------------------
+    # Tab 2: Yield Prediction
+    # --------------------------
+    with tab2:
+        st.header("📊 Crop Yield Prediction")
+        st.write("Enter agricultural parameters to predict yield (tons/hectare).")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            crop = st.text_input("🌱 Crop", value="Rice")
+            crop_year = st.number_input("📅 Crop Year", value=2020, step=1)
+            season = st.text_input("☀️ Season", value="Kharif")
+        with col2:
+            state = st.text_input("🏞️ State", value="Maharashtra")
+            area = st.number_input("🌾 Area (hectares)", value=1.0)
+            production = st.number_input("🏭 Production (tons)", value=2.5)
+        with col3:
+            annual_rainfall = st.number_input("🌧️ Annual Rainfall (mm)", value=800.0)
+            fertilizer = st.number_input("🧴 Fertilizer (kg)", value=100.0)
+            pesticide = st.number_input("🧪 Pesticide (kg)", value=10.0)
+
+        if st.button("📈 Predict Yield"):
+            _, yield_model, _, yield_encoders = load_models()
+            crop_val = yield_encoders["Crop"].transform([crop])[0] if crop in yield_encoders["Crop"].classes_ else 0
+            season_val = yield_encoders["Season"].transform([season])[0] if season in yield_encoders["Season"].classes_ else 0
+            state_val = yield_encoders["State"].transform([state])[0] if state in yield_encoders["State"].classes_ else 0
+
+            features = [[crop_val, crop_year, season_val, state_val,
+                         area, production, annual_rainfall, fertilizer, pesticide]]
+            prediction = yield_model.predict(features)
+
+            prediction_value = float(prediction.item())
+            st.success(f"📊 Predicted Yield: **{prediction_value:.2f} tons/hectare**")
+
+# ==============================
+# Login / Sign Up UI
+# ==============================
+def login_ui():
+    st.set_page_config(page_title="🌾 Smart Agriculture Advisor Login", layout="centered")
+    st.title("🔐 Smart Agriculture Advisor Login")
+
+    if "logged_in" not in st.session_state:
+        st.session_state["logged_in"] = False
+        st.session_state["username"] = ""
+
+    option = st.selectbox("Choose Action", ["Login", "Sign Up"])
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    if option == "Sign Up":
+        if st.button("Create Account"):
+            if username in users:
+                st.error("Username already exists!")
+            elif username == "" or password == "":
+                st.warning("Please enter username and password")
+            else:
+                users[username] = password
+                with open(USER_FILE, "wb") as f:
+                    pickle.dump(users, f)
+                st.success("Account created! Please log in.")
+
+    elif option == "Login":
+        if st.button("Login"):
+            if username in users and users[username] == password:
+                st.success(f"Welcome, {username}!")
+                st.session_state["logged_in"] = True
+                st.session_state["username"] = username
+            else:
+                st.error("Invalid username or password")
+
+    if st.session_state["logged_in"]:
+        st.write(f"👋 Hello {st.session_state['username']}! Access your Smart Agriculture Advisor below.")
+        app_ui()
+
+# ==============================
+# Run App
+# ==============================
+if __name__ == "__main__":
+    prepare_models()
+    login_ui()
